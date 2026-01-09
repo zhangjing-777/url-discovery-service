@@ -18,10 +18,9 @@ class Settings(BaseSettings):
     # 连接池配置
     DB_POOL_MIN_SIZE: int = 1
     DB_POOL_MAX_SIZE: int = 10
-    
-    # Playwright 配置
-    BROWSER_HEADLESS: bool = True
-    PAGE_TIMEOUT: int = 30000  # 30秒
+
+    # Playwright 服务配置
+    PLAYWRIGHT_SERVICE_URL: str = "http://localhost:8000"
     
     # 爬虫默认配置
     DEFAULT_MAX_DEPTH: int = 3
