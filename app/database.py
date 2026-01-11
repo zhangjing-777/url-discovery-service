@@ -40,7 +40,7 @@ class Database:
 
             # ⚠️ 强烈建议：DDL 不放在应用启动
             # 如果你现在还想保留，也可以用
-            # await self._init_tables()
+            await self._init_tables()
 
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
