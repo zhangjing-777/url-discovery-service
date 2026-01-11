@@ -76,16 +76,16 @@ async def crawl_urls(request: CrawlRequest):
     Returns:
         入库发现的所有 URL 列表
     """
-    
+    base_url = str(request.base_url)
     try:
         
         # 创建爬虫实例
-        crawler = URLDiscoveryCrawler(request.base_url)
+        crawler = URLDiscoveryCrawler(base_url)
         
         # 执行爬取
         discovered_urls = await crawler.crawl()
 
-        res = await db.save_discovery_result(request.base_url, discovered_urls)
+        res = await db.save_discovery_result(base_url, discovered_urls)
         
         return discovered_urls
     

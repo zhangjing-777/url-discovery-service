@@ -120,21 +120,34 @@ class Database:
     ):
         async with self.pool.connection() as conn:
             async with conn.cursor() as cur:
+                # 1️⃣ 先尝试插入（不存在才插）
                 insert_sql = """
-                INSERT INTO web_urls (origin, discovery_url, discovery_type, last_seen_at)
-                VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (origin, discovery_url)
-                DO UPDATE SET
-                    last_seen_at = NOW(),
-                    discovery_type = EXCLUDED.discovery_type;
+                INSERT INTO web_urls
+                    (origin, discovery_url, discovery_type)
+                SELECT
+                    %s, %s, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM web_urls
+                    WHERE origin = %s AND discovery_url = %s
+                )
                 """
 
                 await cur.execute(
                     insert_sql,
                     (
-                        origin, discovery_url, discovery_type
+                        origin, discovery_url, discovery_type, origin, discovery_url
                     ),
                 )
+
+                # 2️⃣ 无论插没插，更新 last_seen_at
+                update_sql = """
+                UPDATE web_urls
+                SET last_seen_at = NOW()
+                WHERE origin = %s AND discovery_url = %s
+                """
+
+                await cur.execute(update_sql, (origin, discovery_url))
+
 
 
 
