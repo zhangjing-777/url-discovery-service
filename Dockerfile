@@ -1,5 +1,5 @@
 # 使用官方 Python 3.11 镜像
-FROM python:3.11-slim
+FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
 
 WORKDIR /app
 

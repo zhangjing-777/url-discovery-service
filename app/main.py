@@ -5,11 +5,10 @@ FastAPI 应用入口
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from app.config import settings
+from pydantic import BaseModel, Field, HttpUrl
 from app.database import db
-from app.models import CrawlRequest, CrawlResponse
 from app.crawler import URLDiscoveryCrawler
-from app.utils import get_origin, get_url_path
+
 
 # 配置日志
 logging.basicConfig(
@@ -53,7 +52,11 @@ async def root():
     return {"status": "ok", "service": "URL Discovery Service"}
 
 
-@app.post("/crawl-urls", response_model=CrawlResponse)
+class CrawlRequest(BaseModel):
+    """爬取请求模型"""
+    base_url: HttpUrl
+
+@app.post("/crawl-urls")
 async def crawl_urls(request: CrawlRequest):
     """
     URL 发现接口
@@ -71,69 +74,23 @@ async def crawl_urls(request: CrawlRequest):
         request: 爬取请求参数
     
     Returns:
-        发现的所有 URL 列表
+        入库发现的所有 URL 列表
     """
-    start_url = str(request.start_url)
-    origin = get_origin(start_url)
-    
-    logger.info(f"收到爬取请求: start_url={start_url}, max_depth={request.max_depth}, max_pages={request.max_pages}, persist={request.persist}")
-    
-    task_id = None
     
     try:
-        # 如果需要持久化，创建任务记录
-        if request.persist:
-            task_id = await db.create_task(
-                origin=origin,
-                start_url=start_url,
-                max_depth=request.max_depth,
-                max_pages=request.max_pages
-            )
         
         # 创建爬虫实例
-        crawler = URLDiscoveryCrawler(
-            start_url=start_url,
-            max_depth=request.max_depth,
-            max_pages=request.max_pages
-        )
+        crawler = URLDiscoveryCrawler(request.base_url)
         
         # 执行爬取
         discovered_urls = await crawler.crawl()
+
+        res = await db.save_discovery_result(request.base_url, discovered_urls)
         
-        # 持久化 URL
-        if request.persist:
-            logger.info(f"开始持久化 {len(discovered_urls)} 个 URL...")
-            
-            for url_obj in discovered_urls.values():
-                await db.save_url(
-                    origin=origin,
-                    url=url_obj.url,
-                    url_path=get_url_path(url_obj.url),
-                    depth=url_obj.depth,
-                    discovered_from=url_obj.discovered_from,
-                    discovery_type=url_obj.discovery_type
-                )
-            
-            # 更新任务状态
-            await db.update_task(task_id, 'completed', len(discovered_urls))
-            logger.info("URL 持久化完成")
-        
-        # 构造响应
-        url_list = sorted(discovered_urls.keys())
-        
-        return CrawlResponse(
-            origin=origin,
-            task_id=task_id,
-            count=len(url_list),
-            urls=url_list
-        )
+        return discovered_urls
     
     except Exception as e:
         logger.error(f"爬取失败: {e}", exc_info=True)
-        
-        # 更新任务状态为失败
-        if task_id:
-            await db.update_task(task_id, 'failed', 0)
         
         raise HTTPException(status_code=500, detail=f"爬取失败: {str(e)}")
 

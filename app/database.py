@@ -1,142 +1,141 @@
 """
 数据库连接池管理
-使用 asyncpg 直接操作 openGauss（PostgreSQL 协议）
+使用 psycopg (v3) 直接操作 openGauss / PostgreSQL
 """
-import asyncpg
 import logging
 from typing import Optional
+import asyncio
+import psycopg
+from psycopg_pool import AsyncConnectionPool
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class Database:
-    """数据库连接池管理器"""
-    
+    """数据库连接池管理器（psycopg async）"""
+
     def __init__(self):
-        self.pool: Optional[asyncpg.Pool] = None
-    
+        self.pool: Optional[AsyncConnectionPool] = None
+
     async def connect(self):
         """创建连接池"""
-        logger.info(f"正在连接数据库: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
-        
+        logger.info(
+            f"正在连接数据库: "
+            f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        )
+
         try:
-            self.pool = await asyncpg.create_pool(
-                dsn=settings.database_dsn,
+            # psycopg 使用连接字符串（dsn）
+            self.pool = AsyncConnectionPool(
+                conninfo=settings.database_dsn,
                 min_size=settings.DB_POOL_MIN_SIZE,
                 max_size=settings.DB_POOL_MAX_SIZE,
-                command_timeout=60
+                timeout=60,
+                open=True,
             )
+
             logger.info("数据库连接池创建成功")
-            
-            # 初始化数据库表
-            await self._init_tables()
-            
+
+            # ⚠️ 强烈建议：DDL 不放在应用启动
+            # 如果你现在还想保留，也可以用
+            # await self._init_tables()
+
         except Exception as e:
             logger.error(f"数据库连接失败: {e}")
             raise
-    
+
     async def disconnect(self):
         """关闭连接池"""
         if self.pool:
             await self.pool.close()
             logger.info("数据库连接池已关闭")
-    
+
     async def _init_tables(self):
-        """初始化数据库表结构"""
+        """初始化数据库表结构（可选）"""
         logger.info("开始初始化数据库表...")
-        
-        # URL 表
+
         create_urls_table = """
         CREATE TABLE IF NOT EXISTS web_urls (
             id              BIGSERIAL PRIMARY KEY,
             origin          TEXT NOT NULL,
-            url             TEXT NOT NULL,
-            url_path        TEXT NOT NULL,
-            depth           INT NOT NULL,
-            discovered_from TEXT,
+            discovery_url             TEXT NOT NULL,
             discovery_type  TEXT NOT NULL,
             first_seen_at   TIMESTAMP DEFAULT NOW(),
             last_seen_at    TIMESTAMP DEFAULT NOW(),
-            CONSTRAINT uniq_origin_url UNIQUE (origin, url)
+            CONSTRAINT uniq_origin_url UNIQUE (origin, discovery_url)
         );
         """
-        
-        # URL 表索引
+
         create_urls_indexes = """
         CREATE INDEX IF NOT EXISTS idx_web_urls_origin ON web_urls(origin);
-        CREATE INDEX IF NOT EXISTS idx_web_urls_path ON web_urls(url_path);
+        CREATE INDEX IF NOT EXISTS idx_web_urls_path ON web_urls(discovery_url);
         """
-        
-        # Crawl 任务表
-        create_tasks_table = """
-        CREATE TABLE IF NOT EXISTS web_crawl_tasks (
-            id            BIGSERIAL PRIMARY KEY,
-            origin        TEXT NOT NULL,
-            start_url     TEXT NOT NULL,
-            max_depth     INT NOT NULL,
-            max_pages     INT NOT NULL,
-            status        TEXT NOT NULL,
-            total_urls    INT DEFAULT 0,
-            started_at    TIMESTAMP DEFAULT NOW(),
-            finished_at   TIMESTAMP
-        );
-        """
-        
-        async with self.pool.acquire() as conn:
-            await conn.execute(create_urls_table)
-            await conn.execute(create_urls_indexes)
-            await conn.execute(create_tasks_table)
-        
+
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(create_urls_table)
+                await cur.execute(create_urls_indexes)
+
         logger.info("数据库表初始化完成")
-    
-    async def create_task(self, origin: str, start_url: str, max_depth: int, max_pages: int) -> int:
-        """
-        创建爬取任务记录
-        
-        Returns:
-            task_id
-        """
-        query = """
-        INSERT INTO web_crawl_tasks (origin, start_url, max_depth, max_pages, status)
-        VALUES ($1, $2, $3, $4, 'running')
-        RETURNING id
-        """
-        
-        async with self.pool.acquire() as conn:
-            task_id = await conn.fetchval(query, origin, start_url, max_depth, max_pages)
-        
-        logger.info(f"创建爬取任务: task_id={task_id}, origin={origin}")
-        return task_id
-    
-    async def update_task(self, task_id: int, status: str, total_urls: int):
-        """更新任务状态"""
-        query = """
-        UPDATE web_crawl_tasks
-        SET status = $1, total_urls = $2, finished_at = NOW()
-        WHERE id = $3
-        """
-        
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, status, total_urls, task_id)
-        
-        logger.info(f"更新任务状态: task_id={task_id}, status={status}, total_urls={total_urls}")
-    
-    async def save_url(self, origin: str, url: str, url_path: str, depth: int,
-                      discovered_from: Optional[str], discovery_type: str):
-        """
-        保存 URL 到数据库
-        使用 ON CONFLICT 处理重复 URL
-        """
-        query = """
-        INSERT INTO web_urls (origin, url, url_path, depth, discovered_from, discovery_type)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (origin, url)
-        DO UPDATE SET last_seen_at = NOW()
-        """
-        
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, origin, url, url_path, depth, discovered_from, discovery_type)
+
+    async def save_discovery_result(
+        self,
+        origin: str,
+        discovery_result: dict,
+        concurrency: int = 10,
+    ):
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _save_one(dtype, url):
+            async with sem:
+                await self.save_url(
+                    origin=origin,
+                    discovery_url=url,
+                    discovery_type=dtype,
+                )
+
+        tasks = []
+
+        for discovery_type, urls in discovery_result.items():
+            if not isinstance(urls, list):
+                continue
+
+            for discovery_url in urls:
+                tasks.append(
+                    asyncio.create_task(
+                        _save_one(discovery_type, discovery_url)
+                    )
+                )
+
+        await asyncio.gather(*tasks)
+
+
+    async def save_url(
+        self,
+        origin: str,
+        discovery_url: str,
+        discovery_type: str,
+    ):
+        async with self.pool.connection() as conn:
+            async with conn.cursor() as cur:
+                insert_sql = """
+                INSERT INTO web_urls (origin, discovery_url, discovery_type, last_seen_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (origin, discovery_url)
+                DO UPDATE SET
+                    last_seen_at = NOW(),
+                    discovery_type = EXCLUDED.discovery_type;
+                """
+
+                await cur.execute(
+                    insert_sql,
+                    (
+                        origin, discovery_url, discovery_type
+                    ),
+                )
+
 
 
 # 全局数据库实例

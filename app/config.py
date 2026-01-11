@@ -3,6 +3,7 @@
 支持从环境变量读取数据库连接信息
 """
 from pydantic_settings import BaseSettings
+from urllib.parse import quote_plus
 
 
 class Settings(BaseSettings):
@@ -15,24 +16,21 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "password"
     DB_NAME: str = "url_discovery"
     
+    # Playwright 服务配置
+    PLAYWRIGHT_SERVICE_URL: str
+
     # 连接池配置
     DB_POOL_MIN_SIZE: int = 1
     DB_POOL_MAX_SIZE: int = 10
 
-    # Playwright 服务配置
-    PLAYWRIGHT_SERVICE_URL: str = "http://localhost:8000"
-    
-    # 爬虫默认配置
-    DEFAULT_MAX_DEPTH: int = 3
-    DEFAULT_MAX_PAGES: int = 1000
-    
     class Config:
         env_file = ".env"
     
     @property
     def database_dsn(self) -> str:
         """构造数据库 DSN"""
-        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        encoded_password = quote_plus(self.DB_PASSWORD)
+        return f"postgresql://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
 
 settings = Settings()
