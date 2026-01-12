@@ -5,6 +5,7 @@ FastAPI 应用入口
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 from app.database import db
@@ -37,7 +38,6 @@ async def lifespan(app: FastAPI):
     await db.disconnect()
     logger.info("应用已关闭")
 
-
 # 创建 FastAPI 应用
 app = FastAPI(
     root_path="/api/url-discovery-service",
@@ -47,6 +47,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
