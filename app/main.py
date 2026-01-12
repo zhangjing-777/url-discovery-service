@@ -3,6 +3,7 @@ FastAPI 应用入口
 提供 URL 发现 HTTP API
 """
 import logging
+from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
 
 # 创建 FastAPI 应用
 app = FastAPI(
+    root_path="/api/url-discovery-service",
     title="URL Discovery Service",
     description="真实用户路径 URL 发现服务",
     version="1.0.0",
@@ -55,6 +57,8 @@ async def root():
 class CrawlRequest(BaseModel):
     """爬取请求模型"""
     base_url: HttpUrl
+    source_type: str
+    tags: Optional[str] = None
 
 @app.post("/crawl-urls")
 async def crawl_urls(request: CrawlRequest):
@@ -77,6 +81,7 @@ async def crawl_urls(request: CrawlRequest):
         入库发现的所有 URL 列表
     """
     base_url = str(request.base_url)
+    source_type = str(request.source_type)
     try:
         
         # 创建爬虫实例
@@ -85,7 +90,7 @@ async def crawl_urls(request: CrawlRequest):
         # 执行爬取
         discovered_urls = await crawler.crawl()
 
-        res = await db.save_discovery_result(base_url, discovered_urls)
+        res = await db.save_discovery_result(base_url, discovered_urls, source_type, request.tags)
         
         return discovered_urls
     
@@ -95,6 +100,62 @@ async def crawl_urls(request: CrawlRequest):
         raise HTTPException(status_code=500, detail=f"爬取失败: {str(e)}")
 
 
+@app.post("/get-all-sitemap-urls")
+async def get_all_sitemap_urls():
+    """
+
+    """
+    try:
+        res = await db.get_all_for_source_type("sitemap")       
+        return res
+    
+    except Exception as e:
+        logger.error(f"查询失败: {e}", exc_info=True)
+        
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+@app.post("/get-all-key_page-urls")
+async def get_all_key_page_urls():
+    """
+
+    """
+    try:
+        res = await db.get_all_for_source_type("key_page")       
+        return res
+    
+    except Exception as e:
+        logger.error(f"查询失败: {e}", exc_info=True)
+        
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+@app.post("/get-recent-sitemap-urls")
+async def get_recent_sitemap_urls():
+    """
+
+    """
+    try:
+        res = await db.get_recent_for_source_type("sitemap")       
+        return res
+    
+    except Exception as e:
+        logger.error(f"查询失败: {e}", exc_info=True)
+        
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+@app.post("/get-recent-key_page-urls")
+async def get_recent_key_page_urls():
+    """
+
+    """
+    try:
+        res = await db.get_recent_for_source_type("key_page")       
+        return res
+    
+    except Exception as e:
+        logger.error(f"查询失败: {e}", exc_info=True)
+        
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+       
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
