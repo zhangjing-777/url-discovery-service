@@ -2,15 +2,15 @@
 FastAPI 应用入口
 提供 URL 发现 HTTP API
 """
+import asyncio
 import logging
-from typing import Optional, List
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, HttpUrl
+from fastapi import FastAPI
 from app.database import db
-from app.crawler import URLDiscoveryCrawler
-from app.call_url_audit_img import call_cds_url_audit
+from app.scheduler import DiscoveryTaskScheduler
+from app.task_routes import router as task_router, set_scheduler
+from app.url_routes import router as url_router
 
 
 # 配置日志
@@ -20,24 +20,55 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 全局调度器
+scheduler = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     应用生命周期管理
-    启动时创建数据库连接池，关闭时释放资源
+    启动时创建数据库连接池和调度器，关闭时释放资源
     """
+    global scheduler
+    
     # 启动
     logger.info("应用启动中...")
     await db.connect()
+    
+    # 初始化调度器
+    try:
+        scheduler = DiscoveryTaskScheduler(db)
+        set_scheduler(scheduler)
+        logger.info("任务调度器初始化成功")
+        
+        # 启动调度器
+        scheduler_task = asyncio.create_task(scheduler.start_scheduler())
+        logger.info("任务调度器启动成功")
+    except Exception as e:
+        logger.error(f"调度器启动失败: {e}")
+        scheduler_task = None
+    
     logger.info("应用启动完成")
     
     yield
     
     # 关闭
     logger.info("应用关闭中...")
+    
+    if scheduler:
+        await scheduler.stop_scheduler()
+    
+    if scheduler_task:
+        try:
+            scheduler_task.cancel()
+            await asyncio.wait_for(scheduler_task, timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    
     await db.disconnect()
     logger.info("应用已关闭")
+
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -56,126 +87,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    """健康检查"""
-    return {"status": "ok", "service": "URL Discovery Service"}
-
-
-class CrawlRequest(BaseModel):
-    """爬取请求模型"""
-    base_url: HttpUrl
-    source_type: str
-    tags: Optional[str] = None
-    depth: int = Field(default=1, description="深度")
-    strategy_type: str = Field(default="", description="策略类型")
-    strategy_contents: str = Field(default="", description="策略内容")
-    exclude_suffixes: list[str] = Field(default=['.js', '.css'], description="排除带特定后缀的url")
-
-    
-
-@app.post("/crawl-urls-audit")
-async def crawl_urls_audit(request: CrawlRequest):
-    """
-    URL 发现接口
-    
-    使用 Playwright 模拟真实浏览器行为，通过多种机制发现 URL：
-    1. DOM Anchor（a[href]）
-    2. SPA 路由监听（framenavigated）
-    3. Network 请求捕获（request）
-    4. HTTP Redirect 捕获（response）
-    5. JS Runtime 资源（performance API）
-    6. 自动用户行为触发（点击交互）
-    7. 文本兜底（正则扫描）
-    
-    Args:
-        request: 爬取请求参数
-    
-    Returns:
-        入库发现的所有 URL 列表, 并对discovered_urls进行audit
-    """
-    base_url = str(request.base_url)
-    source_type = str(request.source_type)
-    try:
-        
-        # 创建爬虫实例
-        crawler = URLDiscoveryCrawler(base_url)
-        
-        # 执行爬取
-        discovered_urls = await crawler.crawl()
-
-        res = await db.save_discovery_result(base_url, discovered_urls, source_type, request.tags)
-        
-        #执行audit
-        urls = await db.get_needed_discovery_urls(base_url, request.exclude_suffixes)  
-        success_count, fail_count = await call_cds_url_audit(
-                        urls, 
-                        request.depth, 
-                        request.strategy_type,
-                        request.strategy_contents)     
-        return success_count, fail_count
-    
-    except Exception as e:
-        logger.error(f"爬取失败: {e}", exc_info=True)
-        
-        raise HTTPException(status_code=500, detail=f"爬取失败: {str(e)}")
-
-
-@app.post("/get-all-sitemap-urls")
-async def get_all_sitemap_urls():
-    """
-
-    """
-    try:
-        res = await db.get_all_for_source_type("sitemap")       
-        return res
-    
-    except Exception as e:
-        logger.error(f"查询失败: {e}", exc_info=True)
-        
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
-
-@app.post("/get-all-key_page-urls")
-async def get_all_key_page_urls():
-    """
-
-    """
-    try:
-        res = await db.get_all_for_source_type("key_page")       
-        return res
-    
-    except Exception as e:
-        logger.error(f"查询失败: {e}", exc_info=True)
-        
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
-
-@app.post("/get-recent-sitemap-urls")
-async def get_recent_sitemap_urls():
-    """
-
-    """
-    try:
-        res = await db.get_recent_for_source_type("sitemap")       
-        return res
-    
-    except Exception as e:
-        logger.error(f"查询失败: {e}", exc_info=True)
-        
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
-
-@app.post("/get-recent-key_page-urls")
-async def get_recent_key_page_urls():
-    """
-
-    """
-    try:
-        res = await db.get_recent_for_source_type("key_page")       
-        return res
-    
-    except Exception as e:
-        logger.error(f"查询失败: {e}", exc_info=True)
-        
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+# 注册路由
+app.include_router(url_router)
+app.include_router(task_router)
 
 
 if __name__ == "__main__":

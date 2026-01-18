@@ -77,10 +77,39 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_web_urls_source_time ON web_urls(source_type, first_seen_at, last_seen_at);
         """
 
+        create_task_table = """"
+        CREATE TABLE IF NOT EXISTS url_discovery_tasks (
+            id BIGSERIAL PRIMARY KEY,
+            task_name VARCHAR(255) NOT NULL UNIQUE,
+            base_url TEXT NOT NULL,
+            source_type VARCHAR(100) NOT NULL,
+            tags TEXT,
+            depth INTEGER NOT NULL DEFAULT 1,
+            strategy_type VARCHAR(100) NOT NULL DEFAULT '',
+            strategy_contents TEXT DEFAULT '',
+            exclude_suffixes TEXT[] NOT NULL DEFAULT ARRAY['.js', '.css'],
+            execution_interval INTEGER NOT NULL,  -- 执行间隔(秒)
+            next_execution_time TIMESTAMP,  -- 下次执行时间
+            last_execution_time TIMESTAMP,  -- 最后执行时间
+            create_time TIMESTAMP DEFAULT NOW(),
+            is_active BOOLEAN DEFAULT TRUE,  -- 任务是否激活
+            success_counts INTEGER DEFAULT 0,  -- 成功次数
+            fail_counts INTEGER DEFAULT 0  -- 失败次数
+        );
+        """
+
+        create_task_indexes = """
+        CREATE INDEX IF NOT EXISTS idx_discovery_tasks_name ON url_discovery_tasks(task_name);
+        CREATE INDEX IF NOT EXISTS idx_discovery_tasks_next_exec ON url_discovery_tasks(next_execution_time);
+        CREATE INDEX IF NOT EXISTS idx_discovery_tasks_active ON url_discovery_tasks(is_active);
+        CREATE INDEX IF NOT EXISTS idx_discovery_tasks_source ON url_discovery_tasks(source_type);
+        """
         async with self.pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(create_urls_table)
                 await cur.execute(create_urls_indexes)
+                await cur.execute(create_task_table)
+                await cur.execute(create_task_indexes)
 
         logger.info("数据库表初始化完成")
 
