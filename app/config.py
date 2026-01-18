@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     
     # Playwright 服务配置
     PLAYWRIGHT_SERVICE_URL: str
+    
+    #cds-url-audit-img中的cds_url_audit服务
+    AUDIT_URL: str
 
     # 连接池配置
     DB_POOL_MIN_SIZE: int = 1

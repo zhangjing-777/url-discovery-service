@@ -3,13 +3,14 @@ FastAPI 应用入口
 提供 URL 发现 HTTP API
 """
 import logging
-from typing import Optional
+from typing import Optional, List
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 from app.database import db
 from app.crawler import URLDiscoveryCrawler
+from app.call_url_audit_img import call_cds_url_audit
 
 
 # 配置日志
@@ -42,7 +43,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     root_path="/api/url-discovery-service",
     title="URL Discovery Service",
-    description="真实用户路径 URL 发现服务",
+    description="真实用户路径 URL 发现且audit服务",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -66,9 +67,15 @@ class CrawlRequest(BaseModel):
     base_url: HttpUrl
     source_type: str
     tags: Optional[str] = None
+    depth: int = Field(default=1, description="深度")
+    strategy_type: str = Field(default="", description="策略类型")
+    strategy_contents: str = Field(default="", description="策略内容")
+    exclude_suffixes: list[str] = Field(default=['.js', '.css'], description="排除带特定后缀的url")
 
-@app.post("/crawl-urls")
-async def crawl_urls(request: CrawlRequest):
+    
+
+@app.post("/crawl-urls-audit")
+async def crawl_urls_audit(request: CrawlRequest):
     """
     URL 发现接口
     
@@ -85,7 +92,7 @@ async def crawl_urls(request: CrawlRequest):
         request: 爬取请求参数
     
     Returns:
-        入库发现的所有 URL 列表
+        入库发现的所有 URL 列表, 并对discovered_urls进行audit
     """
     base_url = str(request.base_url)
     source_type = str(request.source_type)
@@ -99,7 +106,14 @@ async def crawl_urls(request: CrawlRequest):
 
         res = await db.save_discovery_result(base_url, discovered_urls, source_type, request.tags)
         
-        return discovered_urls
+        #执行audit
+        urls = await db.get_needed_discovery_urls(base_url, request.exclude_suffixes)  
+        success_count, fail_count = await call_cds_url_audit(
+                        urls, 
+                        request.depth, 
+                        request.strategy_type,
+                        request.strategy_contents)     
+        return success_count, fail_count
     
     except Exception as e:
         logger.error(f"爬取失败: {e}", exc_info=True)
@@ -162,7 +176,8 @@ async def get_recent_key_page_urls():
         logger.error(f"查询失败: {e}", exc_info=True)
         
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
-       
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

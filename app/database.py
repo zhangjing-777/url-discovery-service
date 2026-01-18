@@ -179,7 +179,7 @@ class Database:
         SELECT *
         FROM web_urls
         WHERE source_type = %s
-          AND last_seen_at - first_seen_at <= INTERVAL '1 minute'
+          AND last_seen_at - first_seen_at <= INTERVAL '5 minute'
         ORDER BY first_seen_at ASC
         """
 
@@ -189,6 +189,32 @@ class Database:
                 rows = await cur.fetchall()
 
         return rows
+
+    async def get_needed_discovery_urls(self, origin: str, exclude_suffixes:list[str]):
+        """
+        获取短时间内新增的 URL，
+        并排除确定为静态资源的后缀（以 list 形式维护）
+        """
+
+        sql = """
+        SELECT discovery_url
+        FROM web_urls
+        WHERE origin = %s
+        AND NOT EXISTS (
+                SELECT 1
+                FROM unnest(%s::text[]) AS ext
+                WHERE discovery_url ILIKE '%%' || ext
+                OR discovery_url ILIKE '%%' || ext || '?%%'
+            )
+        ORDER BY first_seen_at ASC
+        """
+
+        async with self.pool.connection() as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, (origin, exclude_suffixes))
+                rows = await cur.fetchall()
+
+        return [row["discovery_url"] for row in rows]
 
 
 # 全局数据库实例
