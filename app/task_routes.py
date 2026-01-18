@@ -7,8 +7,6 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from app.models import DiscoveryTaskCreate, DiscoveryTaskUpdate, DiscoveryTaskResponse
 from app.database import db
-from app.crawler import URLDiscoveryCrawler
-from app.call_url_audit_img import call_cds_url_audit
 
 
 logger = logging.getLogger(__name__)
@@ -53,12 +51,12 @@ async def create_discovery_task(task: DiscoveryTaskCreate, background_tasks: Bac
                 INSERT INTO url_discovery_tasks (
                     task_name, base_url, source_type, tags, depth,
                     strategy_type, strategy_contents, exclude_suffixes,
-                    execution_interval, next_execution_time
+                    execution_interval, use_llm, next_execution_time
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, task_name, base_url, source_type, tags, depth,
                           strategy_type, strategy_contents, exclude_suffixes,
-                          execution_interval, next_execution_time, last_execution_time,
+                          execution_interval, use_llm, next_execution_time, last_execution_time,
                           create_time, is_active, success_counts, fail_counts
                 """
                 
@@ -74,6 +72,7 @@ async def create_discovery_task(task: DiscoveryTaskCreate, background_tasks: Bac
                         task.strategy_contents,
                         task.exclude_suffixes,
                         task.execution_interval,
+                        task.use_llm,
                         next_time
                     )
                 )
@@ -93,7 +92,8 @@ async def create_discovery_task(task: DiscoveryTaskCreate, background_tasks: Bac
                 strategy_type=result[6],
                 strategy_contents=result[7],
                 exclude_suffixes=result[8],
-                execution_interval=result[9]
+                execution_interval=result[9],
+                use_llm=result[10]
             )
 
         return DiscoveryTaskResponse(
@@ -107,12 +107,13 @@ async def create_discovery_task(task: DiscoveryTaskCreate, background_tasks: Bac
             strategy_contents=result[7],
             exclude_suffixes=result[8],
             execution_interval=result[9],
-            next_execution_time=result[10],
-            last_execution_time=result[11],
-            create_time=result[12],
-            is_active=result[13],
-            success_counts=result[14],
-            fail_counts=result[15]
+            use_llm=result[10],
+            next_execution_time=result[11],
+            last_execution_time=result[12],
+            create_time=result[13],
+            is_active=result[14],
+            success_counts=result[15],
+            fail_counts=result[16]
         )
 
     except HTTPException:
@@ -129,7 +130,7 @@ async def list_discovery_tasks(skip: int = 0, limit: int = 100):
         sql = """
         SELECT id, task_name, base_url, source_type, tags, depth,
                strategy_type, strategy_contents, exclude_suffixes,
-               execution_interval, next_execution_time, last_execution_time,
+               execution_interval, use_llm, next_execution_time, last_execution_time,
                create_time, is_active, success_counts, fail_counts
         FROM url_discovery_tasks
         ORDER BY create_time DESC
@@ -153,12 +154,13 @@ async def list_discovery_tasks(skip: int = 0, limit: int = 100):
                 strategy_contents=row[7],
                 exclude_suffixes=row[8],
                 execution_interval=row[9],
-                next_execution_time=row[10],
-                last_execution_time=row[11],
-                create_time=row[12],
-                is_active=row[13],
-                success_counts=row[14],
-                fail_counts=row[15]
+                use_llm=row[10],
+                next_execution_time=row[11],
+                last_execution_time=row[12],
+                create_time=row[13],
+                is_active=row[14],
+                success_counts=row[15],
+                fail_counts=row[16]
             )
             for row in results
         ]
@@ -175,7 +177,7 @@ async def get_discovery_task(task_id: int):
         sql = """
         SELECT id, task_name, base_url, source_type, tags, depth,
                strategy_type, strategy_contents, exclude_suffixes,
-               execution_interval, next_execution_time, last_execution_time,
+               execution_interval, use_llm, next_execution_time, last_execution_time,
                create_time, is_active, success_counts, fail_counts
         FROM url_discovery_tasks
         WHERE id = %s
@@ -200,12 +202,13 @@ async def get_discovery_task(task_id: int):
             strategy_contents=result[7],
             exclude_suffixes=result[8],
             execution_interval=result[9],
-            next_execution_time=result[10],
-            last_execution_time=result[11],
-            create_time=result[12],
-            is_active=result[13],
-            success_counts=result[14],
-            fail_counts=result[15]
+            use_llm=result[10],
+            next_execution_time=result[11],
+            last_execution_time=result[12],
+            create_time=result[13],
+            is_active=result[14],
+            success_counts=result[15],
+            fail_counts=result[16]
         )
 
     except HTTPException:
@@ -350,7 +353,7 @@ async def get_discovery_task_status(task_id: int):
     try:
         sql = """
         SELECT task_name, is_active, success_counts, fail_counts,
-               last_execution_time, next_execution_time
+               last_execution_time, next_execution_time, use_llm
         FROM url_discovery_tasks
         WHERE id = %s
         """
@@ -372,6 +375,7 @@ async def get_discovery_task_status(task_id: int):
             "fail_counts": result[3],
             "last_execution_time": result[4],
             "next_execution_time": result[5],
+            "use_llm": result[6],
             "is_running": is_running
         }
 

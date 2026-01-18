@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     #cds-url-audit-img中的cds_url_audit服务
     AUDIT_URL: str
 
+    #openrouter
+    OPENROUTER_API_KEY: str
+    OPENROUTER_ENDPOINT: str
+    MODEL: str
+
     # 连接池配置
     DB_POOL_MIN_SIZE: int = 1
     DB_POOL_MAX_SIZE: int = 10

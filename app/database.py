@@ -33,9 +33,9 @@ class Database:
                 min_size=settings.DB_POOL_MIN_SIZE,
                 max_size=settings.DB_POOL_MAX_SIZE,
                 timeout=60,
-                open=True,
+                open=False,
             )
-
+            await self.pool.open()
             logger.info("数据库连接池创建成功")
 
             # ⚠️ 强烈建议：DDL 不放在应用启动
@@ -77,7 +77,7 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_web_urls_source_time ON web_urls(source_type, first_seen_at, last_seen_at);
         """
 
-        create_task_table = """"
+        create_task_table = """
         CREATE TABLE IF NOT EXISTS url_discovery_tasks (
             id BIGSERIAL PRIMARY KEY,
             task_name VARCHAR(255) NOT NULL UNIQUE,
@@ -85,10 +85,11 @@ class Database:
             source_type VARCHAR(100) NOT NULL,
             tags TEXT,
             depth INTEGER NOT NULL DEFAULT 1,
-            strategy_type VARCHAR(100) NOT NULL DEFAULT '',
+            strategy_type VARCHAR(100) DEFAULT '',
             strategy_contents TEXT DEFAULT '',
             exclude_suffixes TEXT[] NOT NULL DEFAULT ARRAY['.js', '.css'],
-            execution_interval INTEGER NOT NULL,  -- 执行间隔(秒)
+            execution_interval INTEGER NOT NULL DEFAULT 300,  -- 执行间隔(秒)
+            use_llm BOOLEAN DEFAULT FALSE, --是否用大模型分类discovery_urls
             next_execution_time TIMESTAMP,  -- 下次执行时间
             last_execution_time TIMESTAMP,  -- 最后执行时间
             create_time TIMESTAMP DEFAULT NOW(),

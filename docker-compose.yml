@@ -15,3 +15,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
+
+    networks: 
+      - audit_network
+
+networks:
+  audit_network:
+    external: true

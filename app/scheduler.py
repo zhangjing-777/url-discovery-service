@@ -8,6 +8,7 @@ from typing import Optional
 from app.database import Database
 from app.crawler import URLDiscoveryCrawler
 from app.call_url_audit_img import call_cds_url_audit
+from app.urls_classifier import LLMURLClassifier
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class DiscoveryTaskScheduler:
             # 查询需要执行的任务
             query = """
             SELECT id, task_name, base_url, source_type, tags, depth, 
-                   strategy_type, strategy_contents, exclude_suffixes, execution_interval
+                   strategy_type, strategy_contents, exclude_suffixes, execution_interval, use_llm
             FROM url_discovery_tasks 
             WHERE is_active = TRUE 
             AND (next_execution_time IS NULL OR next_execution_time <= NOW())
@@ -75,7 +76,8 @@ class DiscoveryTaskScheduler:
                         strategy_type=task[6],
                         strategy_contents=task[7],
                         exclude_suffixes=task[8],
-                        execution_interval=task[9]
+                        execution_interval=task[9],
+                        use_llm=task[10]
                     )
                 )
                 self.running_tasks[task_id] = task_coroutine
@@ -94,7 +96,8 @@ class DiscoveryTaskScheduler:
         strategy_type: str,
         strategy_contents: str,
         exclude_suffixes: list,
-        execution_interval: int
+        execution_interval: int,
+        use_llm=False
     ):
         """执行具体的URL发现任务"""
         logger.info(f"开始执行任务 {task_id}: {task_name}")
@@ -116,10 +119,21 @@ class DiscoveryTaskScheduler:
             )
 
             # 3. 获取需要审核的URL
-            urls_to_audit = await self.db.get_needed_discovery_urls(
-                origin=base_url,
-                exclude_suffixes=exclude_suffixes
-            )
+            if use_llm:
+                classifier = LLMURLClassifier(base_url, discovered_urls)
+                classified = await classifier.call_openrouter_api()
+                urls_to_audit = [
+                                    url
+                                    for key, urls in classified.items()
+                                    if "accessible" in key
+                                    for url in urls
+                                ]
+
+            else:
+                urls_to_audit = await self.db.get_needed_discovery_urls(
+                    origin=base_url,
+                    exclude_suffixes=exclude_suffixes
+                )
 
             # 4. 调用审核接口
             success_count = 0
